@@ -3,7 +3,7 @@ name: Deploy packages listing to GitHub Pages
 on:
   push:
     branches: [ main ]
-  workflow_dispatch:    # allows manual triggering
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -24,8 +24,7 @@ jobs:
 
       - name: Generate static site
         run: |
-          mkdir -p public
-          python3 generate_index.py > public/index.html
+          python3 generate_index.py
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3

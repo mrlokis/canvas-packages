@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 """
-Generate an HTML index page listing the contents of the 'packages' folder.
+Generate a static site from the 'packages' folder:
+- Copies all files and folders to public/packages
+- Creates an index.html in every directory listing its contents
+- Creates a root index.html that points to public/packages/
 """
 
 import os
+import shutil
 import pathlib
 from datetime import datetime
-import stat
 
 def format_size(size_bytes):
     """Convert bytes to a human-readable string."""
@@ -24,14 +27,27 @@ def get_file_info(path):
     except OSError:
         return None, None
 
-def main():
-    # HTML header
-    print("""<!DOCTYPE html>
+def generate_index(directory_path, output_dir):
+    """
+    Generate index.html inside output_dir for the given directory_path.
+    directory_path: absolute or relative path to the source directory (inside packages)
+    output_dir: absolute path where the index.html will be written (inside public/packages)
+    """
+    # Get the list of items in the source directory
+    items = []
+    for item in sorted(directory_path.iterdir()):
+        if item.name.startswith('.'):
+            continue
+        items.append(item)
+
+    # Build the HTML
+    html_lines = []
+    html_lines.append("""<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Packages listing</title>
+    <title>Directory listing</title>
     <style>
         body {
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
@@ -88,60 +104,93 @@ def main():
 </head>
 <body>
 <div class="container">
-    <h1>📦 Contents of <code>packages/</code></h1>
+    <h1>📦 Contents of <code>{}</code></h1>
     <ul>
-""")
+""".format(str(directory_path.relative_to(pathlib.Path("packages")))))
 
-    packages_dir = pathlib.Path("packages")
-    if not packages_dir.exists() or not packages_dir.is_dir():
-        print("        <li>⚠️ The <code>packages</code> folder does not exist.</li>")
-    else:
-        # Gather items, ignoring hidden files/folders
-        items = []
-        for item in packages_dir.iterdir():
-            if item.name.startswith('.'):
-                continue
-            items.append(item)
-
-        # Sort: directories first, then files, alphabetically
-        items.sort(key=lambda p: (not p.is_dir(), p.name.lower()))
-
-        for item in items:
-            rel_path = item.name
-            full_path = item
-            if item.is_dir():
-                icon = "📁"
-                css_class = "folder"
-                href = f"{rel_path}/"
+    for item in items:
+        rel_name = item.name
+        if item.is_dir():
+            icon = "📁"
+            css_class = "folder"
+            href = f"{rel_name}/"
+            # Count items in subfolder (optional)
+            try:
+                sub_count = sum(1 for _ in item.iterdir() if not _.name.startswith('.'))
+                size_info = f" ({sub_count} item{'s' if sub_count != 1 else ''})" if sub_count else " (empty)"
+            except OSError:
                 size_info = ""
-                # Optionally count items in subfolder
-                try:
-                    sub_count = sum(1 for _ in item.iterdir() if not _.name.startswith('.'))
-                    if sub_count:
-                        size_info = f" ({sub_count} item{'s' if sub_count != 1 else ''})"
-                    else:
-                        size_info = " (empty)"
-                except OSError:
-                    size_info = ""
-            else:
-                icon = "📄"
-                css_class = "file"
-                href = rel_path
-                size_bytes, mod_time = get_file_info(full_path)
-                size_info = format_size(size_bytes) if size_bytes is not None else ""
-                if mod_time:
-                    size_info += f" – {mod_time.strftime('%Y-%m-%d %H:%M')}"
+        else:
+            icon = "📄"
+            css_class = "file"
+            href = rel_name
+            size_bytes, mod_time = get_file_info(item)
+            size_info = format_size(size_bytes) if size_bytes is not None else ""
+            if mod_time:
+                size_info += f" – {mod_time.strftime('%Y-%m-%d %H:%M')}"
 
-            print(f"""
+        html_lines.append(f"""
         <li class="{css_class}">
             <span class="icon">{icon}</span>
-            <a href="{href}">{rel_path}</a>
+            <a href="{href}">{rel_name}</a>
             <span class="meta">{size_info}</span>
         </li>""")
 
-    print("""
+    html_lines.append("""
     </ul>
 </div>
+</body>
+</html>""")
+
+    # Write the index.html file
+    output_index = output_dir / "index.html"
+    with open(output_index, "w", encoding="utf-8") as f:
+        f.write("\n".join(html_lines))
+
+def main():
+    # Define paths
+    packages_src = pathlib.Path("packages")
+    public_root = pathlib.Path("public")
+    packages_dest = public_root / "packages"
+
+    # Clean and prepare output directory
+    if public_root.exists():
+        shutil.rmtree(public_root)
+    public_root.mkdir()
+
+    if not packages_src.exists() or not packages_src.is_dir():
+        # No packages folder – create a simple placeholder
+        with open(public_root / "index.html", "w", encoding="utf-8") as f:
+            f.write("""<!DOCTYPE html><html><body><h1>No packages folder found</h1></body></html>""")
+        return
+
+    # Copy the entire packages tree to public/packages
+    shutil.copytree(packages_src, packages_dest, dirs_exist_ok=True)
+
+    # Walk the copied tree and generate index.html in every directory
+    for root, dirs, files in os.walk(packages_dest):
+        root_path = pathlib.Path(root)
+        # Corresponding source path (to get file metadata and relative path for title)
+        rel_path = root_path.relative_to(public_root)
+        src_root = packages_src / rel_path.relative_to("packages") if rel_path != pathlib.Path("packages") else packages_src
+        generate_index(src_root, root_path)
+
+    # Generate root index.html (pointing to packages/)
+    root_index = public_root / "index.html"
+    with open(root_index, "w", encoding="utf-8") as f:
+        f.write(f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Packages</title>
+    <meta http-equiv="refresh" content="0; url=packages/">
+    <style>
+        body {{ font-family: sans-serif; margin: 2rem; }}
+        a {{ color: #0366d6; }}
+    </style>
+</head>
+<body>
+    <p>Redirecting to <a href="packages/">packages/</a>...</p>
 </body>
 </html>""")
 
